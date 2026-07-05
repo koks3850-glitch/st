@@ -167,11 +167,21 @@ audioPlayer.on('error', (e) => {
   isPlayingNotify = false;
 });
 
+// 状態がどう遷移しているか、切り分けのため全部ログに出す
+audioPlayer.on('stateChange', (oldState, newState) => {
+  console.log(`[audioPlayer] ${oldState.status} -> ${newState.status}`);
+});
+
 function playNextNotify() {
   if (isPlayingNotify || notifyQueue <= 0 || !voiceConnection) return;
   notifyQueue -= 1;
   try {
     const resource = createAudioResource(NOTIFY_SOUND_PATH);
+    if (resource.playStream) {
+      resource.playStream.on('error', (e) => {
+        console.error('[voice] 音声ストリーム自体のエラー:', e.message);
+      });
+    }
     isPlayingNotify = true;
     audioPlayer.play(resource);
     console.log('[voice] notify.wavの再生を開始しました');
@@ -285,6 +295,11 @@ discordClient.on('interactionCreate', async (interaction) => {
     voiceConnection.subscribe(audioPlayer);
     lastVoiceActivityAt = Date.now();
 
+    // 状態がどう遷移しているか、切り分けのため全部ログに出す
+    voiceConnection.on('stateChange', (oldState, newState) => {
+      console.log(`[voiceConnection] ${oldState.status} -> ${newState.status}`);
+    });
+
     voiceConnection.on(VoiceConnectionStatus.Disconnected, async () => {
       // @discordjs/voiceは、実際にはVCに残ったままでも一瞬「Disconnected」状態を
       // 経由することがある（自動で再接続される想定の状態）。
@@ -303,6 +318,13 @@ discordClient.on('interactionCreate', async (interaction) => {
         voiceConnection = null;
       }
     });
+
+    try {
+      await entersState(voiceConnection, VoiceConnectionStatus.Ready, 10000);
+      console.log('[voice] 接続がReady状態になりました（再生可能）');
+    } catch (e) {
+      console.error('[voice] 10秒待ってもReady状態になりませんでした:', e.message);
+    }
 
     await interaction.reply(`🔊 「${channel.name}」に参加しました。タイマーがUPになったらここで通知音を鳴らします。`);
     console.log(`[voice] 「${channel.name}」に参加しました（voiceConnectionセット済み: ${Boolean(voiceConnection)}）`);
