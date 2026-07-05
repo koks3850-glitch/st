@@ -46,9 +46,9 @@ const PORT = process.env.PORT || 3000;
 const VC_IDLE_TIMEOUT_MINUTES = Number(process.env.VC_IDLE_TIMEOUT_MINUTES) || 30;
 const VC_IDLE_TIMEOUT_MS = VC_IDLE_TIMEOUT_MINUTES * 60 * 1000;
 
-// VCで鳴らす通知音。lol-hud-server/assets/notify.mp3 を用意してGitHubにpushしてください。
+// VCで鳴らす通知音。lol-hud-server/assets/notify.wav を用意してGitHubにpushしてください。
 // (HUD側のオフラインモード用notify.mp3とは別物・別ファイルです)
-const NOTIFY_SOUND_PATH = path.join(__dirname, 'assets', 'notify.mp3');
+const NOTIFY_SOUND_PATH = path.join(__dirname, 'assets', 'notify.wav');
 
 if (!DISCORD_TOKEN || !CLIENT_ID) {
   console.error(
@@ -174,9 +174,9 @@ function playNextNotify() {
     const resource = createAudioResource(NOTIFY_SOUND_PATH);
     isPlayingNotify = true;
     audioPlayer.play(resource);
-    console.log('[voice] notify.mp3の再生を開始しました');
+    console.log('[voice] notify.wavの再生を開始しました');
   } catch (e) {
-    console.error('[voice] notify.mp3の再生に失敗（ファイルが無いかも）:', e.message);
+    console.error('[voice] notify.wavの再生に失敗（ファイルが無いかも）:', e.message);
     isPlayingNotify = false;
   }
 }
