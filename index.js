@@ -319,15 +319,14 @@ discordClient.on('interactionCreate', async (interaction) => {
       }
     });
 
-    try {
-      await entersState(voiceConnection, VoiceConnectionStatus.Ready, 10000);
-      console.log('[voice] 接続がReady状態になりました（再生可能）');
-    } catch (e) {
-      console.error('[voice] 10秒待ってもReady状態になりませんでした:', e.message);
-    }
-
     await interaction.reply(`🔊 「${channel.name}」に参加しました。タイマーがUPになったらここで通知音を鳴らします。`);
     console.log(`[voice] 「${channel.name}」に参加しました（voiceConnectionセット済み: ${Boolean(voiceConnection)}）`);
+
+    // Ready状態への到達確認は、返信をブロックしないよう裏側で行う（ログ確認用）
+    entersState(voiceConnection, VoiceConnectionStatus.Ready, 10000)
+      .then(() => console.log('[voice] 接続がReady状態になりました（再生可能）'))
+      .catch((e) => console.error('[voice] 10秒待ってもReady状態になりませんでした:', e.message));
+
     return;
   }
 
