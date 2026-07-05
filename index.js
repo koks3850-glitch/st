@@ -9,9 +9,11 @@
 //   ROOM_CODEという合言葉が一致したクライアントだけ接続できる。
 // - `/rs` は「全員のHUDをリセットして」という合図をブロードキャストするだけ。
 //   リセット後の実際の状態組み立ては各HUD側のresetAll()に任せる。
+// - `/join` で入ったVCに向けて、タイマーUP(`timer-up`)が届くたびに通知音を再生する。
 
 require('dotenv').config();
 
+const path = require('path');
 const http = require('http');
 const { WebSocketServer } = require('ws');
 const {
@@ -22,6 +24,13 @@ const {
   SlashCommandBuilder,
   EmbedBuilder,
 } = require('discord.js');
+const {
+  joinVoiceChannel,
+  createAudioPlayer,
+  createAudioResource,
+  AudioPlayerStatus,
+  VoiceConnectionStatus,
+} = require('@discordjs/voice');
 
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
@@ -31,6 +40,14 @@ const HUD_ZIP_URL =
   process.env.HUD_ZIP_URL ||
   '（HUD_ZIP_URL が未設定です。Northflankの環境変数に設定してください）';
 const PORT = process.env.PORT || 3000;
+
+// 一定時間、通知音が鳴らなかったら自動でVCから退出する（デフォルト30分）
+const VC_IDLE_TIMEOUT_MINUTES = Number(process.env.VC_IDLE_TIMEOUT_MINUTES) || 30;
+const VC_IDLE_TIMEOUT_MS = VC_IDLE_TIMEOUT_MINUTES * 60 * 1000;
+
+// VCで鳴らす通知音。lol-hud-server/assets/notify.mp3 を用意してGitHubにpushしてください。
+// (HUD側のオフラインモード用notify.mp3とは別物・別ファイルです)
+const NOTIFY_SOUND_PATH = path.join(__dirname, 'assets', 'notify.mp3');
 
 if (!DISCORD_TOKEN || !CLIENT_ID) {
   console.error(
@@ -92,8 +109,8 @@ wss.on('connection', (ws, req) => {
       latestState = msg.state;
       broadcast(msg, ws);
     } else if (msg.type === 'timer-up') {
-      // VC通知音は今後の拡張ポイント。現状は他クライアントへの中継のみ行う。
       broadcast(msg, ws);
+      queueNotifySound(); // VCに入っていれば通知音を鳴らす（入っていなければ何もしない）
     }
   });
 
@@ -129,7 +146,58 @@ server.listen(PORT, () => {
 });
 
 // ============================================================
-// Discordボット（/rs, /setup）
+// VC通知音の再生（/join で入ったVCで鳴らす）
+// ============================================================
+
+let voiceConnection = null;
+const audioPlayer = createAudioPlayer();
+let notifyQueue = 0;
+let isPlayingNotify = false;
+let lastVoiceActivityAt = Date.now();
+
+audioPlayer.on(AudioPlayerStatus.Idle, () => {
+  isPlayingNotify = false;
+  playNextNotify();
+});
+
+audioPlayer.on('error', (e) => {
+  console.error('[voice] 再生エラー:', e);
+  isPlayingNotify = false;
+});
+
+function playNextNotify() {
+  if (isPlayingNotify || notifyQueue <= 0 || !voiceConnection) return;
+  notifyQueue -= 1;
+  try {
+    const resource = createAudioResource(NOTIFY_SOUND_PATH);
+    isPlayingNotify = true;
+    audioPlayer.play(resource);
+  } catch (e) {
+    console.error('[voice] notify.mp3の再生に失敗（ファイルが無いかも）:', e.message);
+    isPlayingNotify = false;
+  }
+}
+
+function queueNotifySound() {
+  if (!voiceConnection) return; // botがどのVCにも入っていなければ何もしない
+  lastVoiceActivityAt = Date.now();
+  notifyQueue += 1;
+  playNextNotify();
+}
+
+// 一定時間、通知音が鳴らなかったら自動でVCから退出する
+setInterval(() => {
+  if (!voiceConnection) return;
+  const idleMs = Date.now() - lastVoiceActivityAt;
+  if (idleMs > VC_IDLE_TIMEOUT_MS) {
+    console.log(`[voice] ${VC_IDLE_TIMEOUT_MINUTES}分間操作が無かったため自動退出しました`);
+    voiceConnection.destroy();
+    voiceConnection = null;
+  }
+}, 60 * 1000);
+
+// ============================================================
+// Discordボット（/rs, /setup, /join, /leave）
 // ============================================================
 
 const discordClient = new Client({
@@ -143,6 +211,12 @@ const commands = [
   new SlashCommandBuilder()
     .setName('setup')
     .setDescription('LoL Spell HUDの導入方法とダウンロードリンクを表示します'),
+  new SlashCommandBuilder()
+    .setName('join')
+    .setDescription('botを自分がいるVCに呼んで、タイマーUP時の通知音再生を有効にします'),
+  new SlashCommandBuilder()
+    .setName('leave')
+    .setDescription('botをVCから退出させます（通知音は鳴らなくなります）'),
 ].map((c) => c.toJSON());
 
 async function registerCommands() {
@@ -181,6 +255,49 @@ discordClient.on('interactionCreate', async (interaction) => {
     return;
   }
 
+  if (interaction.commandName === 'join') {
+    const channel = interaction.member && interaction.member.voice && interaction.member.voice.channel;
+
+    if (!channel) {
+      await interaction.reply({
+        content: '⚠️ 先にVC（ボイスチャンネル）に参加してから実行してください。',
+        ephemeral: true,
+      });
+      return;
+    }
+
+    if (voiceConnection) {
+      voiceConnection.destroy();
+      voiceConnection = null;
+    }
+
+    voiceConnection = joinVoiceChannel({
+      channelId: channel.id,
+      guildId: channel.guild.id,
+      adapterCreator: channel.guild.voiceAdapterCreator,
+    });
+    voiceConnection.subscribe(audioPlayer);
+    lastVoiceActivityAt = Date.now();
+
+    voiceConnection.on(VoiceConnectionStatus.Disconnected, () => {
+      voiceConnection = null;
+    });
+
+    await interaction.reply(`🔊 「${channel.name}」に参加しました。タイマーがUPになったらここで通知音を鳴らします。`);
+    return;
+  }
+
+  if (interaction.commandName === 'leave') {
+    if (voiceConnection) {
+      voiceConnection.destroy();
+      voiceConnection = null;
+      await interaction.reply('👋 VCから退出しました。');
+    } else {
+      await interaction.reply({ content: 'もともとVCには参加していません。', ephemeral: true });
+    }
+    return;
+  }
+
   if (interaction.commandName === 'setup') {
     const embed = new EmbedBuilder()
       .setTitle('🎮 LoL Spell HUD セットアップ')
@@ -200,6 +317,8 @@ discordClient.on('interactionCreate', async (interaction) => {
           '右クリック：可変スペル切り替え（対応スロットのみ）',
           'Cosmic / Ionianアイコンクリック：補正ON/OFF',
           '`/rs`：試合リセット（VC参加者のみ実行可）',
+          '`/join`：VC通知音を鳴らすため、botを自分のVCに呼ぶ',
+          '`/leave`：botをVCから退出させる',
           '',
           `**ダウンロード**\n${HUD_ZIP_URL}`,
         ].join('\n')
