@@ -110,6 +110,7 @@ wss.on('connection', (ws, req) => {
       latestState = msg.state;
       broadcast(msg, ws);
     } else if (msg.type === 'timer-up') {
+      console.log('[sync] クライアントからtimer-upを受信しました');
       broadcast(msg, ws);
       queueNotifySound(); // VCに入っていれば通知音を鳴らす（入っていなければ何もしない）
     }
@@ -173,6 +174,7 @@ function playNextNotify() {
     const resource = createAudioResource(NOTIFY_SOUND_PATH);
     isPlayingNotify = true;
     audioPlayer.play(resource);
+    console.log('[voice] notify.mp3の再生を開始しました');
   } catch (e) {
     console.error('[voice] notify.mp3の再生に失敗（ファイルが無いかも）:', e.message);
     isPlayingNotify = false;
@@ -303,6 +305,7 @@ discordClient.on('interactionCreate', async (interaction) => {
     });
 
     await interaction.reply(`🔊 「${channel.name}」に参加しました。タイマーがUPになったらここで通知音を鳴らします。`);
+    console.log(`[voice] 「${channel.name}」に参加しました（voiceConnectionセット済み: ${Boolean(voiceConnection)}）`);
     return;
   }
 
