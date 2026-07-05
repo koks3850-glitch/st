@@ -30,6 +30,7 @@ const {
   createAudioResource,
   AudioPlayerStatus,
   VoiceConnectionStatus,
+  entersState,
 } = require('@discordjs/voice');
 
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
@@ -179,7 +180,10 @@ function playNextNotify() {
 }
 
 function queueNotifySound() {
-  if (!voiceConnection) return; // botがどのVCにも入っていなければ何もしない
+  if (!voiceConnection) {
+    console.log('[voice] VCに接続していない（と認識している）ため通知音をスキップしました');
+    return;
+  }
   lastVoiceActivityAt = Date.now();
   notifyQueue += 1;
   playNextNotify();
@@ -279,8 +283,23 @@ discordClient.on('interactionCreate', async (interaction) => {
     voiceConnection.subscribe(audioPlayer);
     lastVoiceActivityAt = Date.now();
 
-    voiceConnection.on(VoiceConnectionStatus.Disconnected, () => {
-      voiceConnection = null;
+    voiceConnection.on(VoiceConnectionStatus.Disconnected, async () => {
+      // @discordjs/voiceは、実際にはVCに残ったままでも一瞬「Disconnected」状態を
+      // 経由することがある（自動で再接続される想定の状態）。
+      // ここで即座にvoiceConnection=nullにしてしまうと、実際は繋がっているのに
+      // 通知音の送り先を見失う、という不具合になるため、まず再接続を試みる。
+      try {
+        await Promise.race([
+          entersState(voiceConnection, VoiceConnectionStatus.Signalling, 5000),
+          entersState(voiceConnection, VoiceConnectionStatus.Connecting, 5000),
+        ]);
+        // 再接続中/再接続できた → まだ切断確定ではないので何もしない
+      } catch (e) {
+        // 本当に切断された
+        console.log('[voice] VC接続が切断されました');
+        if (voiceConnection) voiceConnection.destroy();
+        voiceConnection = null;
+      }
     });
 
     await interaction.reply(`🔊 「${channel.name}」に参加しました。タイマーがUPになったらここで通知音を鳴らします。`);
