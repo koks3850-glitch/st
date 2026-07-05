@@ -1,0 +1,15 @@
+{
+  "name": "lol-hud-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "LoL Spell HUD 用 Discord bot + 複数人同期WebSocket中継サーバー",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.15.3",
+    "dotenv": "^16.4.5",
+    "ws": "^8.17.1"
+  }
+}
